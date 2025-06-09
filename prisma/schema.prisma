@@ -1,0 +1,271 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String           @id @default(cuid())
+  email         String          @unique
+  emailVerified DateTime?       // For email verification status
+  password      String?         // Null if using social login
+  name          String?         // Full name
+  username      String          @unique
+  profileImage  String?
+  bio           String?         // User's bio/description
+  isPrivate     Boolean         @default(false)
+  role          UserRole        @default(USER)
+  
+  // Social login information
+  accounts      Account[]
+  sessions      Session[]
+  
+  // User preferences
+  preferredLanguages String[]   // Array of preferred languages for podcasts
+  notificationPrefs Json?       // JSON object for notification preferences
+  
+  // Activity tracking
+  lastLoginAt   DateTime?
+  lastActiveAt  DateTime?
+  
+  // Relationships
+  ratings       Rating[]
+  reviews       Review[]
+  interactions  UserInteraction[]
+  
+  // Timestamps
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([email])
+  @@index([username])
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+model Account {
+  id                 String    @id @default(cuid())
+  userId             String
+  type               String    // oauth, email, etc.
+  provider           String    // google, apple, etc.
+  providerAccountId  String    // ID from the provider
+  refresh_token      String?   @db.Text
+  access_token       String?   @db.Text
+  expires_at         Int?
+  token_type        String?
+  scope             String?
+  id_token          String?   @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Podcast {
+  id            String       @id @default(cuid())
+  title         String
+  description   String       @db.Text
+  publisher     String
+  imageUrl      String?
+  feedUrl       String      @unique
+  language      String      @default("en")
+  explicit      Boolean     @default(false)
+  author        String?
+  copyright     String?
+  link          String?
+  type          String?     // episodic or serial
+  complete      Boolean     @default(false)  // whether the podcast is still active
+  blocked       Boolean     @default(false)  // whether the podcast is blocked from public listing
+  
+  // External IDs
+  externalId    String?     @unique  // ID from external podcast directory
+  itunesId      String?     @unique
+  spotifyId     String?     @unique
+  
+  // Stats and metrics
+  averageRating Float?      // Calculated from ratings
+  totalRatings  Int         @default(0)
+  totalReviews  Int         @default(0)
+  totalListens  Int         @default(0)
+  
+  // Episode tracking
+  episodeCount  Int         @default(0)
+  lastEpisodeAt DateTime?
+  
+  // Relationships
+  episodes      Episode[]
+  ratings       Rating[]    @relation("PodcastRatings")
+  reviews       Review[]    @relation("PodcastReviews")
+  likes         UserInteraction[] @relation("PodcastLikes")
+  followers     UserInteraction[] @relation("PodcastFollows")
+  
+  // Timestamps
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([title])
+  @@index([publisher])
+  @@index([language])
+  @@index([lastEpisodeAt])
+  @@index([averageRating])
+  @@index([totalListens])
+  @@index([createdAt])
+  @@index([language, averageRating])
+}
+
+model Episode {
+  id            String       @id @default(cuid())
+  title         String
+  description   String       @db.Text
+  audioUrl      String
+  imageUrl      String?      // Can inherit from podcast if not set
+  duration      Int         // Duration in seconds
+  publishDate   DateTime
+  transcript    String?      @db.Text
+  
+  // Episode numbering
+  seasonNumber  Int?
+  episodeNumber Int?
+  
+  // Media details
+  mimeType      String?     // audio/mpeg, audio/mp4, etc.
+  fileSize      Int?        // Size in bytes
+  explicit      Boolean     @default(false)
+  
+  // External IDs
+  externalId    String?     @unique  // ID from external podcast directory
+  guid          String?     @unique  // RSS feed GUID
+  
+  // Stats and metrics
+  averageRating Float?      // Calculated from ratings
+  totalRatings  Int         @default(0)
+  totalReviews  Int         @default(0)
+  totalListens  Int         @default(0)
+  
+  // Relationships
+  podcast       Podcast     @relation(fields: [podcastId], references: [id], onDelete: Cascade)
+  podcastId     String
+  ratings       Rating[]
+  reviews       Review[]
+  likes         UserInteraction[] @relation("EpisodeLikes")
+  listens       UserInteraction[] @relation("EpisodeListens")
+  listenLater   UserInteraction[] @relation("EpisodeListenLater")
+  
+  // Timestamps
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([title])
+  @@index([podcastId])
+  @@index([publishDate])
+  @@index([seasonNumber, episodeNumber])
+  @@index([duration])
+  @@index([totalListens])
+  @@index([averageRating])
+  @@index([podcastId, publishDate])
+}
+
+model Rating {
+  id        String    @id @default(cuid())
+  rating    Int       @db.SmallInt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relations
+  user      User      @relation(fields: [userId], references: [id])
+  userId    String
+  podcast   Podcast?  @relation("PodcastRatings", fields: [podcastId], references: [id])
+  podcastId String?
+  episode   Episode?  @relation(fields: [episodeId], references: [id])
+  episodeId String?
+
+  @@unique([userId, podcastId])
+  @@unique([userId, episodeId])
+  @@index([rating])
+  @@index([createdAt])
+  @@index([userId])
+  @@index([podcastId, rating])
+  @@index([episodeId, rating])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  podcast   Podcast? @relation("PodcastReviews", fields: [podcastId], references: [id])
+  podcastId String?
+  episode   Episode? @relation(fields: [episodeId], references: [id])
+  episodeId String?
+
+  @@unique([userId, podcastId])
+  @@unique([userId, episodeId])
+  @@index([createdAt])
+  @@index([userId])
+  @@index([podcastId, createdAt])
+  @@index([episodeId, createdAt])
+}
+
+model UserInteraction {
+  id        String   @id @default(cuid())
+  type      String   // LIKE, LISTEN, LISTEN_LATER, FOLLOW
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+
+  // Podcast interactions
+  podcastLike     Podcast? @relation("PodcastLikes", fields: [podcastLikeId], references: [id])
+  podcastLikeId   String?
+  podcastFollow   Podcast? @relation("PodcastFollows", fields: [podcastFollowId], references: [id])
+  podcastFollowId String?
+
+  // Episode interactions
+  episodeLike       Episode? @relation("EpisodeLikes", fields: [episodeLikeId], references: [id])
+  episodeLikeId     String?
+  episodeListen     Episode? @relation("EpisodeListens", fields: [episodeListenId], references: [id])
+  episodeListenId   String?
+  episodeListenLater Episode? @relation("EpisodeListenLater", fields: [episodeListenLaterId], references: [id])
+  episodeListenLaterId String?
+
+  @@unique([userId, podcastLikeId])
+  @@unique([userId, podcastFollowId])
+  @@unique([userId, episodeLikeId])
+  @@unique([userId, episodeListenId])
+  @@unique([userId, episodeListenLaterId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([userId, type])
+}
